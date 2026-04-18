@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>パチスロ設定推測ツール（Web版）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- シンプルなスタイル -->
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Yu Gothic", sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #f5f5f5;
+    }
+    .container {
+      max-width: 480px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 16px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    h1 {
+      font-size: 20px;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+    label {
+      display: block;
+      margin-top: 12px;
+      font-weight: bold;
+    }
+    select, input {
+      width: 100%;
+      padding: 8px;
+      margin-top: 4px;
+      box-sizing: border-box;
+      font-size: 16px;
+    }
+    button {
+      width: 100%;
+      margin-top: 16px;
+      padding: 10px;
+      font-size: 16px;
+      background: #1976d2;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:disabled {
+      background: #aaa;
+      cursor: default;
+    }
+    .result {
+      margin-top: 16px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    canvas {
+      margin-top: 16px;
+    }
+  </style>
+
+  <!-- Chart.js（グラフ用CDN） -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h1>パチスロ設定推測ツール</h1>
+
+    <label for="machineSelect">機種を選択</label>
+    <select id="machineSelect">
+      <option value="">読み込み中...</option>
+    </select>
+
+    <label for="gamesInput">総ゲーム数</label>
+    <input id="gamesInput" type="number" min="0" placeholder="例：1000">
+
+    <label for="bigInput">BIG回数</label>
+    <input id="bigInput" type="number" min="0" placeholder="例：12">
+
+    <label for="regInput">REG回数</label>
+    <input id="regInput" type="number" min="0" placeholder="例：4">
+
+    <button id="inferButton" disabled>推測する</button>
+
+    <div class="result" id="resultArea"></div>
+
+    <canvas id="chartCanvas"></canvas>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
