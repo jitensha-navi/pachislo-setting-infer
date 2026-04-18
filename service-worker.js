@@ -7,6 +7,7 @@ self.addEventListener("install", (event) => {
         "./script.js",
         "./manifest.json",
         "./machines/new_king_hanahana_v30.json",
+        "./machines/Shake_Bonus_Trigger.json",
         "./machines/my_juggler_v.json"
       ]);
     })
