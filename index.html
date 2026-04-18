@@ -5,6 +5,10 @@
   <title>パチスロ設定推測ツール（Web版）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
+  <!-- PWA 用 -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#1976d2">
+
   <!-- シンプルなスタイル -->
   <style>
     body {
@@ -92,5 +96,12 @@
   </div>
 
   <script src="script.js"></script>
+
+  <!-- PWA Service Worker 登録 -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("service-worker.js");
+    }
+  </script>
 </body>
 </html>
