@@ -1,19 +1,29 @@
+// ===============================
+//  PWA キャッシュ（最小構成）
+//  ・index.html / script.js / manifest.json をキャッシュ
+//  ・machines/machines.json だけキャッシュ
+//  ・個別の機種 JSON はキャッシュしない（更新が楽）
+// ===============================
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open("pwa-cache-v1").then((cache) => {
+    caches.open("pwa-cache-v2").then((cache) => {
       return cache.addAll([
         "./",
         "./index.html",
         "./script.js",
         "./manifest.json",
-        "./machines/new_king_hanahana_v30.json",
-        "./machines/Shake_Bonus_Trigger.json",
-        "./machines/my_juggler_v.json"
+        "./machines/machines.json"
       ]);
     })
   );
 });
 
+// ===============================
+//  fetch イベント
+//  ・キャッシュにあれば返す
+//  ・なければネットワークから取得
+// ===============================
 self.addEventListener("fetch", (event) => {
   event.respondWith(
     caches.match(event.request).then((response) => {
