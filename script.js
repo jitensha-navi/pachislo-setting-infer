@@ -1,6 +1,6 @@
 // ▼ machines/machines.json に一覧をまとめる方式に変更
-let MACHINE_FILES = [];   // ← ここは空でOK
-let machines = [];        // { file, data } の配列
+let MACHINE_FILES = [];
+let machines = [];
 let currentChart = null;
 
 // ▼ 二項分布の対数尤度
@@ -157,9 +157,12 @@ function setupEvents() {
   });
 }
 
-// ▼ OCR 共通処理（アップロード & カメラ）
+// ▼ OCR 共通処理
 async function processImageForOCR(file) {
-  if (!file) return;
+  if (!file) {
+    alert("画像が選択されていません。");
+    return;
+  }
 
   const { data: { text } } = await Tesseract.recognize(file, 'jpn');
 
@@ -170,17 +173,27 @@ async function processImageForOCR(file) {
   if (result.reg)   document.getElementById("regInput").value = result.reg;
 }
 
-// ▼ 写真アップロード（ギャラリー）
+// ▼ 写真添付時に自動読み取り
 document.getElementById("photoInput").addEventListener("change", async (e) => {
   await processImageForOCR(e.target.files[0]);
 });
 
-// ▼ スマホカメラ起動（撮影）
+// ▼ カメラ撮影時に自動読み取り
 document.getElementById("cameraInput").addEventListener("change", async (e) => {
   await processImageForOCR(e.target.files[0]);
 });
 
-// ▼ 当日データだけ抽出する関数（強化版）
+// ▼ ★ 画像読み取りボタン（再読み取り）
+document.getElementById("readImageButton").addEventListener("click", async () => {
+  const photoFile = document.getElementById("photoInput").files[0];
+  const cameraFile = document.getElementById("cameraInput").files[0];
+
+  const file = cameraFile || photoFile;
+
+  await processImageForOCR(file);
+});
+
+// ▼ 当日データだけ抽出する関数
 function extractTodayData(text) {
   const lines = text.split('\n').map(l => l.trim());
 
@@ -192,18 +205,15 @@ function extractTodayData(text) {
 
   for (let line of lines) {
 
-    // 本日の開始キーワード
     if (line.includes("本日") || line.includes("今日") || line.includes("当日")) {
       inToday = true;
       continue;
     }
 
-    // 前日ブロックが来たら終了
     if (line.includes("1日前") || line.includes("2日前") || line.includes("前日")) {
       inToday = false;
     }
 
-    // 当日ブロック内の BB / RB
     if (inToday) {
       if (line.match(/(BB|BIG)/i)) {
         const num = parseInt(line.replace(/[^0-9]/g, ""));
@@ -215,7 +225,6 @@ function extractTodayData(text) {
       }
     }
 
-    // 総ゲーム数の抽出（複数表記に対応）
     if (line.match(/(総|累計|ゲーム).*([回転]|ゲーム|数)/)) {
       const num = parseInt(line.replace(/[^0-9]/g, ""));
       if (!isNaN(num)) games = num;
