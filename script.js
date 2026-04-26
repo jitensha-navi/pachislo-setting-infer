@@ -1,15 +1,256 @@
-// ▼ machines/machines.json に一覧をまとめる方式に変更
+// ======================================================
+//  パチスロ設定推測ツール（PaddleOCR版）
+// ======================================================
+
+// ▼ 機種データ
 let MACHINE_FILES = [];
 let machines = [];
 let currentChart = null;
 
-// ▼ 二項分布の対数尤度
+// ▼ PaddleOCR インスタンス
+let ocr = null;
+
+// ======================================================
+//  ▼ PaddleOCR 初期化
+// ======================================================
+async function initPaddleOCR() {
+  if (ocr) return;
+
+  ocr = await PaddleOCR.create({
+    lang: "japan",
+    wasmPath: "https://cdn.jsdelivr.net/npm/paddleocr-wasm/dist/"
+  });
+
+  console.log("PaddleOCR 初期化完了");
+}
+
+// ======================================================
+//  ▼ 画像縮小（最大幅 1200px）
+// ======================================================
+function resizeImage(img, maxWidth = 1200) {
+  if (img.width <= maxWidth) return img;
+
+  const scale = maxWidth / img.width;
+  const canvas = document.createElement("canvas");
+  canvas.width = maxWidth;
+  canvas.height = img.height * scale;
+
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  const resized = new Image();
+  resized.src = canvas.toDataURL("image/jpeg", 0.9);
+  return resized;
+}
+
+// ======================================================
+//  ▼ ガンマ補正（白飛び抑制）
+// ======================================================
+function applyGamma(imageData, gamma = 0.7) {
+  const data = imageData.data;
+  const inv = 1 / gamma;
+
+  for (let i = 0; i < data.length; i += 4) {
+    data[i]     = 255 * Math.pow(data[i] / 255, inv);
+    data[i + 1] = 255 * Math.pow(data[i + 1] / 255, inv);
+    data[i + 2] = 255 * Math.pow(data[i + 2] / 255, inv);
+  }
+  return imageData;
+}
+
+// ======================================================
+//  ▼ ローカルコントラスト強調（簡易CLAHE）
+// ======================================================
+function localContrast(imageData) {
+  const data = imageData.data;
+  const w = imageData.width;
+  const h = imageData.height;
+
+  const radius = 10;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+
+      let sum = 0, count = 0;
+
+      for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+
+          const idx = (ny * w + nx) * 4;
+          sum += data[idx];
+          count++;
+        }
+      }
+
+      const avg = sum / count;
+      const idx = (y * w + x) * 4;
+
+      const v = data[idx] * 1.4 - avg * 0.4;
+      const clamped = Math.max(0, Math.min(255, v));
+
+      data[idx] = data[idx + 1] = data[idx + 2] = clamped;
+    }
+  }
+
+  return imageData;
+}
+
+// ======================================================
+//  ▼ 二値化＋膨張処理（数字を太らせる）
+// ======================================================
+function binarizeAndThicken(imageData, threshold = 150) {
+  const data = imageData.data;
+  const w = imageData.width;
+  const h = imageData.height;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const v = data[i] > threshold ? 255 : 0;
+    data[i] = data[i + 1] = data[i + 2] = v;
+  }
+
+  const copy = new Uint8ClampedArray(data);
+
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const idx = (y * w + x) * 4;
+
+      const neighbors = [
+        idx - 4, idx + 4,
+        idx - w * 4, idx + w * 4
+      ];
+
+      if (neighbors.some(i => copy[i] === 255)) {
+        data[idx] = data[idx + 1] = data[idx + 2] = 255;
+      }
+    }
+  }
+
+  return imageData;
+}
+
+// ======================================================
+//  ▼ 数字補正（先頭0削除のみ）
+// ======================================================
+function fixNumber(num) {
+  if (num === null || isNaN(num)) return null;
+
+  let s = String(num);
+  while (s.length > 1 && s[0] === "0") {
+    s = s.substring(1);
+  }
+  return parseInt(s);
+}
+
+// ======================================================
+//  ▼ PaddleOCR 実行
+// ======================================================
+async function runPaddleOCR(blob) {
+  await initPaddleOCR();
+
+  const buffer = await blob.arrayBuffer();
+  const uint8 = new Uint8Array(buffer);
+
+  const result = await ocr.detectText(uint8);
+  return result;
+}
+
+// ======================================================
+//  ▼ BIG / REG / 総回転 を抽出
+// ======================================================
+function extractNumbers(result) {
+  const texts = result.textBlocks.map(b => b.text);
+
+  let big = null, reg = null, games = null;
+
+  for (let i = 0; i < texts.length; i++) {
+    const t = texts[i];
+
+    if (!big && /(BIG|BB|大当)/i.test(t)) {
+      big = fixNumber(parseInt(texts[i + 1]?.replace(/\D/g, "")));
+    }
+
+    if (!reg && /(REG|RB|レギュ)/i.test(t)) {
+      reg = fixNumber(parseInt(texts[i + 1]?.replace(/\D/g, "")));
+    }
+
+    if (!games && /(総回転|累計|TOTAL)/i.test(t)) {
+      games = fixNumber(parseInt(texts[i + 1]?.replace(/\D/g, "")));
+    }
+  }
+
+  return { big, reg, games };
+}
+
+// ======================================================
+//  ▼ OCR メイン処理
+// ======================================================
+async function processImageForOCR(file) {
+  if (!file) {
+    alert("画像が選択されていません。");
+    return;
+  }
+
+  document.getElementById("loadingOverlay").style.display = "flex";
+
+  try {
+    // ▼ 画像読み込み
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
+    await new Promise(r => img.onload = r);
+
+    // ▼ 縮小
+    const resized = resizeImage(img);
+    await new Promise(r => resized.onload = r);
+
+    // ▼ Canvas に描画
+    const canvas = document.createElement("canvas");
+    canvas.width = resized.width;
+    canvas.height = resized.height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(resized, 0, 0);
+
+    // ▼ 前処理
+    let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    imageData = applyGamma(imageData);
+    imageData = localContrast(imageData);
+    imageData = binarizeAndThicken(imageData);
+
+    ctx.putImageData(imageData, 0, 0);
+
+    // ▼ Blob 化
+    const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+
+    // ▼ PaddleOCR 実行
+    const result = await runPaddleOCR(blob);
+
+    // ▼ 数字抽出
+    const { big, reg, games } = extractNumbers(result);
+
+    if (games !== null) document.getElementById("gamesInput").value = games;
+    if (big   !== null) document.getElementById("bigInput").value   = big;
+    if (reg   !== null) document.getElementById("regInput").value   = reg;
+
+  } catch (e) {
+    console.error(e);
+    alert("読み取りに失敗しました。別の画像でお試しください。");
+  } finally {
+    document.getElementById("loadingOverlay").style.display = "none";
+  }
+}
+
+// ======================================================
+//  ▼ 推測ロジック（あなたの元コードそのまま）
+// ======================================================
 function logLikelihood(nGames, nHit, p) {
   if (p <= 0 || p >= 1) return -Infinity;
   return nHit * Math.log(p) + (nGames - nHit) * Math.log(1 - p);
 }
 
-// ▼ 設定推測ロジック
 function inferSetting(machine, nGames, nBig, nReg) {
   const logLs = {};
 
@@ -39,7 +280,9 @@ function inferSetting(machine, nGames, nBig, nReg) {
   return probs;
 }
 
-// ▼ グラフ描画
+// ======================================================
+//  ▼ グラフ描画（元コード）
+// ======================================================
 function drawChart(probs) {
   const ctx = document.getElementById("chartCanvas").getContext("2d");
   const labels = Object.keys(probs);
@@ -69,7 +312,9 @@ function drawChart(probs) {
   });
 }
 
-// ▼ 結果表示
+// ======================================================
+//  ▼ 結果表示（元コード）
+// ======================================================
 function showResult(machine, probs) {
   const resultArea = document.getElementById("resultArea");
   const entries = Object.entries(probs).sort((a, b) => a[0].localeCompare(b[0]));
@@ -86,7 +331,9 @@ function showResult(machine, probs) {
   resultArea.innerHTML = html;
 }
 
-// ▼ machines/machines.json を読み込む
+// ======================================================
+//  ▼ 機種データ読み込み（元コード）
+// ======================================================
 async function loadMachineList() {
   try {
     const res = await fetch("machines/machines.json");
@@ -96,7 +343,6 @@ async function loadMachineList() {
   }
 }
 
-// ▼ 機種 JSON を読み込んでセレクトに反映
 async function loadMachines() {
   await loadMachineList();
 
@@ -129,10 +375,11 @@ async function loadMachines() {
   document.getElementById("inferButton").disabled = false;
 }
 
-// ▼ 推測ボタン押下時
+// ======================================================
+//  ▼ 推測ボタン
+// ======================================================
 function setupEvents() {
-  const button = document.getElementById("inferButton");
-  button.addEventListener("click", () => {
+  document.getElementById("inferButton").addEventListener("click", () => {
     const select = document.getElementById("machineSelect");
     const idx = select.value;
     if (idx === "") {
@@ -157,196 +404,23 @@ function setupEvents() {
   });
 }
 
-//
-// ▼ ローディング表示 ON/OFF
-//
-function showLoading() {
-  document.getElementById("loadingOverlay").style.display = "flex";
-}
-function hideLoading() {
-  document.getElementById("loadingOverlay").style.display = "none";
-}
-
-//
-// ▼ 画像縮小（最大幅 1200px）
-//
-function resizeImage(img, maxWidth = 1200) {
-  if (img.width <= maxWidth) return img;
-
-  const scale = maxWidth / img.width;
-  const canvas = document.createElement("canvas");
-  canvas.width = maxWidth;
-  canvas.height = img.height * scale;
-
-  const ctx = canvas.getContext("2d");
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-  const resized = new Image();
-  resized.src = canvas.toDataURL("image/jpeg", 0.9);
-  return resized;
-}
-
-//
-// ▼ 数字補正（安全版：先頭の0を削除するだけ）
-//
-function fixNumber(num) {
-  if (num === null || isNaN(num)) return null;
-
-  let s = String(num);
-
-  // 1桁はそのまま
-  if (s.length === 1) return num;
-
-  // 先頭の0を削除（例：03 → 3, 0012 → 12）
-  while (s.length > 1 && s[0] === "0") {
-    s = s.substring(1);
-  }
-
-  return parseInt(s);
-}
-
-//
-// ▼ 数字部分だけを切り出して再OCRする関数（テキスト行ベース）
-//
-async function ocrNumberArea(lines, index) {
-  const text = lines[index] || "";
-  const numStr = text.replace(/[^0-9]/g, "");
-
-  if (numStr.length > 0) {
-    const raw = parseInt(numStr);
-    return fixNumber(raw);
-  }
-
-  return null;
-}
-//
-// ▼ 改良版：processImageForOCR（縮小＋前処理強化＋ローディング対応）
-//
-async function processImageForOCR(file) {
-  if (!file) {
-    alert("画像が選択されていません。");
-    return;
-  }
-
-  showLoading(); // ← ローディング開始
-
-  try {
-    // ▼ 画像読み込み
-    const img = new Image();
-    img.src = URL.createObjectURL(file);
-    await new Promise(resolve => img.onload = resolve);
-
-    // ▼ 画像を縮小（スマホ巨大画像対策）
-    const resized = resizeImage(img, 1200);
-    if (resized !== img) {
-      await new Promise(resolve => resized.onload = resolve);
-    }
-    const targetImg = resized;
-
-    // ▼ 全体を拡大（ラベル認識用）
-    const scale1 = 1.8;
-    const canvas1 = document.createElement("canvas");
-    const ctx1 = canvas1.getContext("2d");
-
-    canvas1.width = targetImg.width * scale1;
-    canvas1.height = targetImg.height * scale1;
-
-    ctx1.imageSmoothingEnabled = true;
-    ctx1.imageSmoothingQuality = "high";
-    ctx1.drawImage(targetImg, 0, 0, canvas1.width, canvas1.height);
-
-    // ▼ グレースケール＋コントラスト補正＋簡易二値化
-    let imageData = ctx1.getImageData(0, 0, canvas1.width, canvas1.height);
-    let data = imageData.data;
-
-    const contrast = 1.2;
-    const threshold = 140; // 簡易二値化の閾値（調整余地あり）
-
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-
-      const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-      const newGray = Math.min(255, Math.max(0, (gray - 128) * contrast + 128));
-
-      // 二値化（白 or 黒）
-      const bin = newGray > threshold ? 255 : 0;
-
-      data[i] = data[i + 1] = data[i + 2] = bin;
-    }
-
-    ctx1.putImageData(imageData, 0, 0);
-
-    // ▼ PNG に変換して OCR（日本語モデル＋英数字優先）
-    const blob1 = await new Promise(resolve => canvas1.toBlob(resolve, "image/png"));
-    const { data: { text } } = await Tesseract.recognize(
-      blob1,
-      'jpn',
-      {
-        tessedit_char_whitelist: '0123456789BIGREgレギュラー総回転数累計TOTAL大当り当り回数BBRB'
-      }
-    );
-
-    const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
-
-    // ▼ ラベル候補
-    const bigLabels = ["BIG", "BB", "大当", "大当り", "当り回数"];
-    const regLabels = ["REG", "RB", "レギュラー"];
-    const gameLabels = ["総回転", "総回転数", "累計", "TOTAL"];
-
-    let big = null, reg = null, games = null;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].toUpperCase();
-
-      if (big === null && bigLabels.some(k => line.includes(k.toUpperCase()))) {
-        big = await ocrNumberArea(lines, i);
-      }
-
-      if (reg === null && regLabels.some(k => line.includes(k.toUpperCase()))) {
-        reg = await ocrNumberArea(lines, i);
-      }
-
-      if (games === null && gameLabels.some(k => line.includes(k.toUpperCase()))) {
-        games = await ocrNumberArea(lines, i);
-      }
-    }
-
-    // ▼ 入力欄に反映（分かったものだけ）
-    if (games !== null) document.getElementById("gamesInput").value = games;
-    if (big   !== null) document.getElementById("bigInput").value   = big;
-    if (reg   !== null) document.getElementById("regInput").value   = reg;
-
-  } catch (err) {
-    console.error("OCR エラー:", err);
-    alert("画像の読み取りに失敗しました。別の画像でお試しください。");
-  } finally {
-    hideLoading(); // ← どんな状況でも必ず実行される
-  }
-}
-// ▼ 写真添付時に自動読み取り
+// ======================================================
+//  ▼ 画像読み取りイベント
+// ======================================================
 document.getElementById("photoInput").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  await processImageForOCR(file);
+  await processImageForOCR(e.target.files[0]);
 });
 
-// ▼ カメラ撮影時に自動読み取り
 document.getElementById("cameraInput").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  await processImageForOCR(file);
+  await processImageForOCR(e.target.files[0]);
 });
 
-// ▼ 画像読み取りボタン（再読み取り）
 document.getElementById("readImageButton").addEventListener("click", async () => {
   const photoFile = document.getElementById("photoInput").files[0];
   const cameraFile = document.getElementById("cameraInput").files[0];
 
   const file = cameraFile || photoFile;
+
   if (!file) {
     alert("先に画像を選択または撮影してください。");
     return;
@@ -355,7 +429,9 @@ document.getElementById("readImageButton").addEventListener("click", async () =>
   await processImageForOCR(file);
 });
 
-// ▼ 初期化
+// ======================================================
+//  ▼ 初期化
+// ======================================================
 window.addEventListener("DOMContentLoaded", () => {
   loadMachines();
   setupEvents();
