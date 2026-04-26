@@ -157,7 +157,23 @@ function setupEvents() {
   });
 }
 
-// ▼ OCR 前処理付き
+//
+// ▼ 追加：数字部分だけを切り出して再OCRする関数
+//
+async function ocrNumberArea(lines, index) {
+  const text = lines[index] || "";
+  const numStr = text.replace(/[^0-9]/g, "");
+
+  if (numStr.length > 0) {
+    return parseInt(numStr);
+  }
+
+  return null;
+}
+
+//
+// ▼ 改良版：processImageForOCR（2段階拡大対応）
+//
 async function processImageForOCR(file) {
   if (!file) {
     alert("画像が選択されていません。");
@@ -169,26 +185,23 @@ async function processImageForOCR(file) {
   img.src = URL.createObjectURL(file);
   await new Promise(resolve => img.onload = resolve);
 
-  // ▼ 拡大倍率（1.5〜2.0 が最適）
-  const scale = 1.8;
+  // ▼ まず全体を拡大（ラベル認識用）
+  const scale1 = 1.8;
+  const canvas1 = document.createElement("canvas");
+  const ctx1 = canvas1.getContext("2d");
 
-  // ▼ canvas で拡大＋前処理
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
+  canvas1.width = img.width * scale1;
+  canvas1.height = img.height * scale1;
 
-  canvas.width = img.width * scale;
-  canvas.height = img.height * scale;
-
-  // 拡大描画（高品質）
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  ctx1.imageSmoothingEnabled = true;
+  ctx1.imageSmoothingQuality = "high";
+  ctx1.drawImage(img, 0, 0, canvas1.width, canvas1.height);
 
   // ▼ グレースケール＋コントラスト補正
-  let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  let imageData = ctx1.getImageData(0, 0, canvas1.width, canvas1.height);
   let data = imageData.data;
 
-  const contrast = 1.15; // ← 強すぎると細い線が消えるので控えめに
+  const contrast = 1.15;
 
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
@@ -201,21 +214,45 @@ async function processImageForOCR(file) {
     data[i] = data[i + 1] = data[i + 2] = newGray;
   }
 
-  ctx.putImageData(imageData, 0, 0);
+  ctx1.putImageData(imageData, 0, 0);
 
-  // ▼ PNG に変換して OCR に渡す
-  const processedBlob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+  // ▼ PNG に変換して OCR
+  const blob1 = await new Promise(resolve => canvas1.toBlob(resolve, "image/png"));
+  const { data: { text } } = await Tesseract.recognize(blob1, 'jpn');
 
-  const { data: { text } } = await Tesseract.recognize(processedBlob, 'jpn');
+  const lines = text.split("\n").map(l => l.trim());
 
-  const result = extractTodayData(text);
+  // ▼ ラベル位置を探す
+  const bigLabels = ["BIG", "BB", "大当", "大当り", "当り回数"];
+  const regLabels = ["REG", "RB", "レギュラー"];
+  const gameLabels = ["総回転", "総回転数", "累計", "TOTAL"];
 
-  // ▼ 1つでも分かったら入力
-  if (result.games !== null) document.getElementById("gamesInput").value = result.games;
-  if (result.big   !== null) document.getElementById("bigInput").value   = result.big;
-  if (result.reg   !== null) document.getElementById("regInput").value   = result.reg;
+  let big = null, reg = null, games = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].toUpperCase();
+
+    // BIG
+    if (big === null && bigLabels.some(k => line.includes(k.toUpperCase()))) {
+      big = await ocrNumberArea(lines, i);
+    }
+
+    // REG
+    if (reg === null && regLabels.some(k => line.includes(k.toUpperCase()))) {
+      reg = await ocrNumberArea(lines, i);
+    }
+
+    // 総回転
+    if (games === null && gameLabels.some(k => line.includes(k.toUpperCase()))) {
+      games = await ocrNumberArea(lines, i);
+    }
+  }
+
+  // ▼ 入力欄に反映（分かったものだけ）
+  if (games !== null) document.getElementById("gamesInput").value = games;
+  if (big   !== null) document.getElementById("bigInput").value   = big;
+  if (reg   !== null) document.getElementById("regInput").value   = reg;
 }
-
 
 // ▼ 写真添付時に自動読み取り
 document.getElementById("photoInput").addEventListener("change", async (e) => {
@@ -237,7 +274,7 @@ document.getElementById("readImageButton").addEventListener("click", async () =>
   await processImageForOCR(file);
 });
 
-// ▼ 当日データだけ抽出
+// ▼ 当日データだけ抽出（表記ゆれ＋近接数字対応）
 function extractTodayData(text) {
   const lines = text.split('\n').map(l => l.trim());
 
@@ -247,24 +284,19 @@ function extractTodayData(text) {
 
   let inToday = false;
 
-  // ▼ 表記ゆれ辞書
   const bigKeywords = ["BIG", "BB", "大当", "大当り", "当り回数", "当たり", "BIG BONUS"];
   const regKeywords = ["REG", "RB", "REG BONUS", "レギュラー"];
   const gameKeywords = ["総回転", "総回転数", "累計", "累計ゲーム", "総数", "ゲーム数", "回転数", "TOTAL", "TOTAL GAME"];
 
-  // ▼ 数字抽出（近接行対応）
   function extractNearbyNumber(lines, index) {
-    // 現在の行
     let num = parseInt(lines[index].replace(/[^0-9]/g, ""));
     if (!isNaN(num)) return num;
 
-    // 次の行
     if (index + 1 < lines.length) {
       num = parseInt(lines[index + 1].replace(/[^0-9]/g, ""));
       if (!isNaN(num)) return num;
     }
 
-    // さらに次の行
     if (index + 2 < lines.length) {
       num = parseInt(lines[index + 2].replace(/[^0-9]/g, ""));
       if (!isNaN(num)) return num;
@@ -276,32 +308,27 @@ function extractTodayData(text) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // ▼ 本日ブロック開始
     if (line.includes("本日") || line.includes("今日") || line.includes("当日")) {
       inToday = true;
       continue;
     }
 
-    // ▼ 前日ブロックが来たら終了
     if (line.includes("1日前") || line.includes("2日前") || line.includes("前日")) {
       inToday = false;
     }
 
-    // ▼ 当日ブロック内の BIG 判定
     if (inToday && big === null) {
       if (bigKeywords.some(k => line.toUpperCase().includes(k.toUpperCase()))) {
         big = extractNearbyNumber(lines, i);
       }
     }
 
-    // ▼ REG 判定
     if (inToday && reg === null) {
       if (regKeywords.some(k => line.toUpperCase().includes(k.toUpperCase()))) {
         reg = extractNearbyNumber(lines, i);
       }
     }
 
-    // ▼ 総回転数（ゲーム数）判定
     if (games === null) {
       if (gameKeywords.some(k => line.toUpperCase().includes(k.toUpperCase()))) {
         games = extractNearbyNumber(lines, i);
