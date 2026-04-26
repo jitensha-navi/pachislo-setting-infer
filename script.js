@@ -168,6 +168,27 @@ function hideLoading() {
 }
 
 //
+// ▼ 画像縮小（最大幅 1200px）
+//
+function resizeImage(img, maxWidth = 1200) {
+  if (img.width <= maxWidth) return img;
+
+  const scale = maxWidth / img.width;
+  const canvas = document.createElement("canvas");
+  canvas.width = maxWidth;
+  canvas.height = img.height * scale;
+
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  const resized = new Image();
+  resized.src = canvas.toDataURL("image/jpeg", 0.9);
+  return resized;
+}
+
+//
 // ▼ 数字補正（安全版：先頭の0を削除するだけ）
 //
 function fixNumber(num) {
@@ -187,7 +208,7 @@ function fixNumber(num) {
 }
 
 //
-// ▼ 数字部分だけを切り出して再OCRする関数（補正付き）
+// ▼ 数字部分だけを切り出して再OCRする関数（テキスト行ベース）
 //
 async function ocrNumberArea(lines, index) {
   const text = lines[index] || "";
@@ -195,14 +216,13 @@ async function ocrNumberArea(lines, index) {
 
   if (numStr.length > 0) {
     const raw = parseInt(numStr);
-    return fixNumber(raw);  // ← 補正を適用
+    return fixNumber(raw);
   }
 
   return null;
 }
-
 //
-// ▼ 改良版：processImageForOCR（2段階拡大＋ローディング対応）
+// ▼ 改良版：processImageForOCR（縮小＋前処理強化＋ローディング対応）
 //
 async function processImageForOCR(file) {
   if (!file) {
@@ -213,29 +233,36 @@ async function processImageForOCR(file) {
   showLoading(); // ← ローディング開始
 
   try {
-
     // ▼ 画像読み込み
     const img = new Image();
     img.src = URL.createObjectURL(file);
     await new Promise(resolve => img.onload = resolve);
 
-    // ▼ まず全体を拡大（ラベル認識用）
+    // ▼ 画像を縮小（スマホ巨大画像対策）
+    const resized = resizeImage(img, 1200);
+    if (resized !== img) {
+      await new Promise(resolve => resized.onload = resolve);
+    }
+    const targetImg = resized;
+
+    // ▼ 全体を拡大（ラベル認識用）
     const scale1 = 1.8;
     const canvas1 = document.createElement("canvas");
     const ctx1 = canvas1.getContext("2d");
 
-    canvas1.width = img.width * scale1;
-    canvas1.height = img.height * scale1;
+    canvas1.width = targetImg.width * scale1;
+    canvas1.height = targetImg.height * scale1;
 
     ctx1.imageSmoothingEnabled = true;
     ctx1.imageSmoothingQuality = "high";
-    ctx1.drawImage(img, 0, 0, canvas1.width, canvas1.height);
+    ctx1.drawImage(targetImg, 0, 0, canvas1.width, canvas1.height);
 
-    // ▼ グレースケール＋コントラスト補正
+    // ▼ グレースケール＋コントラスト補正＋簡易二値化
     let imageData = ctx1.getImageData(0, 0, canvas1.width, canvas1.height);
     let data = imageData.data;
 
-    const contrast = 1.15;
+    const contrast = 1.2;
+    const threshold = 140; // 簡易二値化の閾値（調整余地あり）
 
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i];
@@ -245,18 +272,27 @@ async function processImageForOCR(file) {
       const gray = 0.299 * r + 0.587 * g + 0.114 * b;
       const newGray = Math.min(255, Math.max(0, (gray - 128) * contrast + 128));
 
-      data[i] = data[i + 1] = data[i + 2] = newGray;
+      // 二値化（白 or 黒）
+      const bin = newGray > threshold ? 255 : 0;
+
+      data[i] = data[i + 1] = data[i + 2] = bin;
     }
 
     ctx1.putImageData(imageData, 0, 0);
 
-    // ▼ PNG に変換して OCR
+    // ▼ PNG に変換して OCR（日本語モデル＋英数字優先）
     const blob1 = await new Promise(resolve => canvas1.toBlob(resolve, "image/png"));
-    const { data: { text } } = await Tesseract.recognize(blob1, 'jpn');
+    const { data: { text } } = await Tesseract.recognize(
+      blob1,
+      'jpn',
+      {
+        tessedit_char_whitelist: '0123456789BIGREgレギュラー総回転数累計TOTAL大当り当り回数BBRB'
+      }
+    );
 
-    const lines = text.split("\n").map(l => l.trim());
+    const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
 
-    // ▼ ラベル位置を探す
+    // ▼ ラベル候補
     const bigLabels = ["BIG", "BB", "大当", "大当り", "当り回数"];
     const regLabels = ["REG", "RB", "レギュラー"];
     const gameLabels = ["総回転", "総回転数", "累計", "TOTAL"];
@@ -291,15 +327,18 @@ async function processImageForOCR(file) {
     hideLoading(); // ← どんな状況でも必ず実行される
   }
 }
-
 // ▼ 写真添付時に自動読み取り
 document.getElementById("photoInput").addEventListener("change", async (e) => {
-  await processImageForOCR(e.target.files[0]);
+  const file = e.target.files[0];
+  if (!file) return;
+  await processImageForOCR(file);
 });
 
 // ▼ カメラ撮影時に自動読み取り
 document.getElementById("cameraInput").addEventListener("change", async (e) => {
-  await processImageForOCR(e.target.files[0]);
+  const file = e.target.files[0];
+  if (!file) return;
+  await processImageForOCR(file);
 });
 
 // ▼ 画像読み取りボタン（再読み取り）
@@ -308,6 +347,10 @@ document.getElementById("readImageButton").addEventListener("click", async () =>
   const cameraFile = document.getElementById("cameraInput").files[0];
 
   const file = cameraFile || photoFile;
+  if (!file) {
+    alert("先に画像を選択または撮影してください。");
+    return;
+  }
 
   await processImageForOCR(file);
 });
