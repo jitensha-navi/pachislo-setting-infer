@@ -168,14 +168,34 @@ function hideLoading() {
 }
 
 //
-// ▼ 数字部分だけを切り出して再OCRする関数
+// ▼ 数字補正（安全版：先頭の0を削除するだけ）
+//
+function fixNumber(num) {
+  if (num === null || isNaN(num)) return null;
+
+  let s = String(num);
+
+  // 1桁はそのまま
+  if (s.length === 1) return num;
+
+  // 先頭の0を削除（例：03 → 3, 0012 → 12）
+  while (s.length > 1 && s[0] === "0") {
+    s = s.substring(1);
+  }
+
+  return parseInt(s);
+}
+
+//
+// ▼ 数字部分だけを切り出して再OCRする関数（補正付き）
 //
 async function ocrNumberArea(lines, index) {
   const text = lines[index] || "";
   const numStr = text.replace(/[^0-9]/g, "");
 
   if (numStr.length > 0) {
-    return parseInt(numStr);
+    const raw = parseInt(numStr);
+    return fixNumber(raw);  // ← 補正を適用
   }
 
   return null;
