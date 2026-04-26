@@ -169,18 +169,26 @@ async function processImageForOCR(file) {
   img.src = URL.createObjectURL(file);
   await new Promise(resolve => img.onload = resolve);
 
-  // ▼ canvas で前処理（グレースケール＋コントラスト補正）
+  // ▼ 拡大倍率（1.5〜2.0 が最適）
+  const scale = 1.8;
+
+  // ▼ canvas で拡大＋前処理
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
 
-  canvas.width = img.width;
-  canvas.height = img.height;
+  canvas.width = img.width * scale;
+  canvas.height = img.height * scale;
 
-  ctx.drawImage(img, 0, 0);
+  // 拡大描画（高品質）
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  // ▼ グレースケール＋コントラスト補正
   let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   let data = imageData.data;
 
-  const contrast = 1.4; // ← 調整可能
+  const contrast = 1.15; // ← 強すぎると細い線が消えるので控えめに
 
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
@@ -207,6 +215,7 @@ async function processImageForOCR(file) {
   if (result.big   !== null) document.getElementById("bigInput").value   = result.big;
   if (result.reg   !== null) document.getElementById("regInput").value   = result.reg;
 }
+
 
 // ▼ 写真添付時に自動読み取り
 document.getElementById("photoInput").addEventListener("change", async (e) => {
