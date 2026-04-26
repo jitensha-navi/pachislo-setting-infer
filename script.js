@@ -1,5 +1,5 @@
 // ======================================================
-//  パチスロ設定推測ツール（PaddleOCR版）
+//  パチスロ設定推測ツール（PaddleOCR.js 新SDK版）
 // ======================================================
 
 // ▼ 機種データ
@@ -11,17 +11,20 @@ let currentChart = null;
 let ocr = null;
 
 // ======================================================
-//  ▼ PaddleOCR 初期化
+//  ▼ PaddleOCR.js 初期化（新SDK）
 // ======================================================
 async function initPaddleOCR() {
   if (ocr) return;
 
+  // CDN から PaddleOCR.js を読み込む
+  const module = await import("https://cdn.jsdelivr.net/npm/paddleocrjs/dist/ocr.js");
+  const PaddleOCR = module.PaddleOCR;
+
   ocr = await PaddleOCR.create({
-    lang: "japan",
-    wasmPath: "https://cdn.jsdelivr.net/npm/paddleocr-wasm/dist/"
+    lang: "japan"   // 日本語モデル（数字にも強い）
   });
 
-  console.log("PaddleOCR 初期化完了");
+  console.log("PaddleOCR.js 初期化完了");
 }
 
 // ======================================================
@@ -147,7 +150,7 @@ function fixNumber(num) {
 }
 
 // ======================================================
-//  ▼ PaddleOCR 実行
+//  ▼ PaddleOCR.js 実行（新SDK）
 // ======================================================
 async function runPaddleOCR(blob) {
   await initPaddleOCR();
@@ -155,6 +158,7 @@ async function runPaddleOCR(blob) {
   const buffer = await blob.arrayBuffer();
   const uint8 = new Uint8Array(buffer);
 
+  // detectText → 新SDKの標準メソッド
   const result = await ocr.detectText(uint8);
   return result;
 }
@@ -244,7 +248,7 @@ async function processImageForOCR(file) {
 }
 
 // ======================================================
-//  ▼ 推測ロジック（あなたの元コードそのまま）
+//  ▼ 推測ロジック（元コード）
 // ======================================================
 function logLikelihood(nGames, nHit, p) {
   if (p <= 0 || p >= 1) return -Infinity;
