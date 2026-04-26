@@ -180,7 +180,7 @@ async function processImageForOCR(file) {
   let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   let data = imageData.data;
 
-  const contrast = 1.15; // ← 調整可能
+  const contrast = 1.4; // ← 調整可能
 
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
@@ -238,29 +238,40 @@ function extractTodayData(text) {
 
   let inToday = false;
 
+  // ▼ 表記ゆれ辞書
+  const bigKeywords = ["BIG", "BB", "大当", "大当り", "当り回数", "当たり", "BIG BONUS"];
+  const regKeywords = ["REG", "RB", "REG BONUS", "レギュラー"];
+  const gameKeywords = ["総回転", "総回転数", "累計", "累計ゲーム", "総数", "ゲーム数", "回転数", "TOTAL", "TOTAL GAME"];
+
   for (let line of lines) {
 
+    // ▼ 本日ブロック開始
     if (line.includes("本日") || line.includes("今日") || line.includes("当日")) {
       inToday = true;
       continue;
     }
 
+    // ▼ 前日ブロックが来たら終了
     if (line.includes("1日前") || line.includes("2日前") || line.includes("前日")) {
       inToday = false;
     }
 
+    // ▼ 当日ブロック内の BIG 判定
     if (inToday) {
-      if (line.match(/(BB|BIG)/i)) {
+      if (bigKeywords.some(k => line.toUpperCase().includes(k.toUpperCase()))) {
         const num = parseInt(line.replace(/[^0-9]/g, ""));
         if (!isNaN(num)) big = num;
       }
-      if (line.match(/(RB|REG)/i)) {
+
+      // ▼ REG 判定
+      if (regKeywords.some(k => line.toUpperCase().includes(k.toUpperCase()))) {
         const num = parseInt(line.replace(/[^0-9]/g, ""));
         if (!isNaN(num)) reg = num;
       }
     }
 
-    if (line.match(/(総|累計|ゲーム).*([回転]|ゲーム|数)/)) {
+    // ▼ 総回転数（ゲーム数）判定
+    if (gameKeywords.some(k => line.toUpperCase().includes(k.toUpperCase()))) {
       const num = parseInt(line.replace(/[^0-9]/g, ""));
       if (!isNaN(num)) games = num;
     }
