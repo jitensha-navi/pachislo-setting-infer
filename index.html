@@ -60,7 +60,7 @@
       margin-top: 16px;
     }
 
-    /* ▼ ローディング表示（display:flex を削除済み） */
+    /* ▼ ローディング表示 */
     #loadingOverlay {
       display: none;
       position: fixed;
@@ -78,13 +78,16 @@
     }
   </style>
 
+  <!-- ▼ Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+
+  <!-- ▼ PaddleOCR WASM（日本語モデル対応） -->
+  <script src="https://cdn.jsdelivr.net/npm/paddleocr-wasm/dist/paddleocr.js"></script>
 
 </head>
 <body>
 
-  <!-- ▼ ローディング表示（OCR中に表示される） -->
+  <!-- ▼ ローディング表示 -->
   <div id="loadingOverlay">
     読み取り中…<br>しばらくお待ちください
   </div>
@@ -114,7 +117,7 @@
     <label for="cameraInput">スマホカメラで撮影して読み取る</label>
     <input id="cameraInput" type="file" accept="image/*" capture="environment">
 
-    <!-- ★ 画像読み取りボタン（再読み取り用） -->
+    <!-- ★ 画像読み取りボタン -->
     <button id="readImageButton">画像を読み取る</button>
 
     <button id="inferButton" disabled>推測する</button>
@@ -124,6 +127,7 @@
     <canvas id="chartCanvas"></canvas>
   </div>
 
+  <!-- ▼ PaddleOCR 対応版 script.js -->
   <script src="script.js"></script>
 
   <script>
