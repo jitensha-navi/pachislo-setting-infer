@@ -193,6 +193,7 @@ async function processImageForOCR(file) {
   showLoading(); // ← ローディング開始
 
   try {
+
     // ▼ 画像読み込み
     const img = new Image();
     img.src = URL.createObjectURL(file);
@@ -266,9 +267,9 @@ async function processImageForOCR(file) {
   } catch (err) {
     console.error("OCR エラー:", err);
     alert("画像の読み取りに失敗しました。別の画像でお試しください。");
+  } finally {
+    hideLoading(); // ← どんな状況でも必ず実行される
   }
-
-  hideLoading(); // ← ローディング終了
 }
 
 // ▼ 写真添付時に自動読み取り
